@@ -15,6 +15,7 @@ struct control_block {
         }
         refs++;
     }
+
     void add_weak() noexcept {
         weak_refs++;
     }
@@ -26,6 +27,7 @@ struct control_block {
             del_weak();
         }
     }
+
     void del_weak() noexcept {
         weak_refs--;
         if (weak_refs == 0) {
@@ -36,6 +38,7 @@ struct control_block {
     std::size_t strong_count() const noexcept {
         return refs;
     }
+
     std::size_t weak_count() const noexcept {
         return weak_refs;
     }
@@ -50,16 +53,16 @@ private:
 };
 
 template<typename T, typename D>
-struct regular_control_block final : control_block {
-    explicit regular_control_block(T* _ptr, D _deleter) : ptr(_ptr), deleter(_deleter) {}
+struct regular_control_block final : control_block, D {
+    regular_control_block(T* ptr, D deleter) : ptr(ptr), D(std::move(deleter)) {}
 
     void delete_object() noexcept override {
-        deleter(ptr);
+        static_cast<D&>(*this)(ptr);
         ptr = nullptr;
     }
+
 private:
     T* ptr;
-    D deleter;
 };
 
 template <typename T>

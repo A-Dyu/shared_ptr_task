@@ -11,36 +11,35 @@ struct shared_ptr {
 
     shared_ptr() : cblock(nullptr), ptr(nullptr) {}
 
-    template<typename D>
-    shared_ptr(T* _ptr, D deleter) : ptr(_ptr) {
-        cblock = create_regular_control_block(_ptr, deleter);
-        cblock->add_strong();
-    }
-
-    explicit shared_ptr(T* _ptr) : shared_ptr(_ptr, std::default_delete<T>()) {}
+    explicit shared_ptr(T* ptr) : shared_ptr(ptr, std::default_delete<T>()) {}
 
     shared_ptr(std::nullptr_t) : shared_ptr() {}
 
     template<typename Y, typename D,
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
-    explicit shared_ptr(Y* _ptr, D deleter) : ptr(static_cast<T*>(_ptr)) {
-        cblock = create_regular_control_block(_ptr, deleter);
+    shared_ptr(Y* ptr, D deleter) : ptr(ptr) {
+        try {
+            cblock = new regular_control_block<Y, D>(ptr, deleter);
+        } catch(...) {
+            deleter(ptr);
+            throw;
+        }
         cblock->add_strong();
     }
 
     template<typename Y,
     typename = std::enable_if_t<
             std::is_convertible<Y*, T*>::value> >
-    explicit shared_ptr(Y* _ptr) : shared_ptr(_ptr, std::default_delete<Y>()) {}
+    explicit shared_ptr(Y* ptr) : shared_ptr(ptr, std::default_delete<Y>()) {}
 
     template<typename U>
-    shared_ptr(shared_ptr<U> const& other, T* _ptr) noexcept : shared_ptr(other.cblock, _ptr) {}
+    shared_ptr(shared_ptr<U> const& other, T* ptr) noexcept : shared_ptr(other.cblock, ptr) {}
 
     template<typename Y,
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
-    shared_ptr(shared_ptr<Y> const& other) noexcept : shared_ptr(other, static_cast<T*>(other.ptr)) {}
+    shared_ptr(shared_ptr<Y> const& other) noexcept : shared_ptr(other, other.ptr) {}
 
     shared_ptr(shared_ptr<T> const& other) noexcept : shared_ptr(other.cblock, other.ptr) {}
 
@@ -78,25 +77,16 @@ struct shared_ptr {
     template<typename Y, typename D,
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
-    void reset(Y* _ptr, D deleter) {
-        if (cblock != nullptr) {
-            cblock->del_strong();
-        }
-        ptr = static_cast<T*>(_ptr);
-        try {
-            cblock = new regular_control_block(_ptr, deleter);
-        } catch(...) {
-            deleter(_ptr);
-            throw;
-        }
-        cblock->add_strong();
+    void reset(Y* new_ptr, D deleter) {
+        shared_ptr<T> new_shared(new_ptr, deleter);
+        swap(new_shared);
     }
 
     template<typename Y,
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
-    void reset(Y* _ptr) {
-        reset(_ptr, std::default_delete<Y>());
+    void reset(Y* ptr) {
+        reset(ptr, std::default_delete<Y>());
     }
 
 
@@ -116,8 +106,14 @@ struct shared_ptr {
         return ptr != nullptr;
     }
 
-    long use_count() const noexcept {
+    std::size_t use_count() const noexcept {
         return cblock == nullptr ? 0 : cblock->strong_count();
+    }
+
+    void swap(shared_ptr<T>& other) noexcept {
+        using std::swap;
+        swap(cblock, other.cblock);
+        swap(ptr, other.ptr);
     }
 
     template<typename Y>
@@ -129,22 +125,6 @@ struct shared_ptr {
 private:
     control_block* cblock;
     T* ptr;
-
-    void swap(shared_ptr<T>& other) {
-        using std::swap;
-        swap(cblock, other.cblock);
-        swap(ptr, other.ptr);
-    }
-
-    template<typename Y, typename D>
-    control_block* create_regular_control_block(Y* _ptr, D deleter) {
-        try {
-            return new regular_control_block<Y, D>(_ptr, deleter);
-        } catch(...) {
-            deleter(_ptr);
-            throw;
-        }
-    }
 
     shared_ptr(control_block* _cblock, T* _ptr) : cblock(_cblock), ptr(_ptr) {
         if (cblock != nullptr) {
@@ -163,8 +143,8 @@ shared_ptr<T> make_shared(Args&& ... args) {
     return shared_ptr<T>(cblock, reinterpret_cast<T*>(&cblock->stg));
 }
 
-template<typename T>
-bool operator ==(shared_ptr<T> const& a, shared_ptr<T> const& b) {
+template<typename T, typename Y>
+bool operator ==(shared_ptr<T> const& a, shared_ptr<Y> const& b) {
     return a.get() == b.get();
 }
 
@@ -178,8 +158,8 @@ bool operator ==(std::nullptr_t a, shared_ptr<T> const& b) {
     return b.get() == nullptr;
 }
 
-template<typename T>
-bool operator !=(shared_ptr<T> const& a, shared_ptr<T> const& b) {
+template<typename T, typename Y>
+bool operator !=(shared_ptr<T> const& a, shared_ptr<Y> const& b) {
     return !(a == b);
 }
 
@@ -201,12 +181,12 @@ struct weak_ptr {
     template<typename Y,
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
-    weak_ptr(weak_ptr<Y> const& other) noexcept : weak_ptr(other.cblock, static_cast<T*>(other.ptr)) {}
+    weak_ptr(weak_ptr<Y> const& other) noexcept : weak_ptr(other.cblock, other.ptr) {}
 
     template<typename Y,
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
-    weak_ptr(shared_ptr<Y> const& other) noexcept : weak_ptr(other.cblock, static_cast<T*>(other.ptr)) {}
+    weak_ptr(shared_ptr<Y> const& other) noexcept : weak_ptr(other.cblock, other.ptr) {}
 
     weak_ptr(weak_ptr<T> const& other) noexcept : weak_ptr(other.cblock, other.ptr) {}
 
@@ -229,22 +209,18 @@ struct weak_ptr {
     weak_ptr& operator =(weak_ptr&& other) {
         if (this != &other) {
             weak_ptr<T> empty;
-            swap(empty);
-            swap(other);
+            weak_ptr(std::move(other)).swap(*this);
         }
         return *this;
     }
 
     std::size_t use_count() const noexcept {
-        return cblock == nullptr ? 0 : cblock->weak_count();
+        return cblock == nullptr ? 0 : cblock->strong_count();
     }
 
     shared_ptr<T> lock() const noexcept {
-        if (cblock == nullptr) {
+        if (cblock == nullptr || cblock->strong_count() == 0) {
             return shared_ptr<T>();
-        }
-        if (cblock->strong_count() == 0) {
-            return shared_ptr<T>(cblock, static_cast<T*>(nullptr));
         }
         return shared_ptr<T>(cblock, ptr);
     }
@@ -256,18 +232,17 @@ struct weak_ptr {
         return ptr != nullptr;
     }
 
-
-private:
-    control_block* cblock;
-    T* ptr;
-
-    void swap(weak_ptr<T>& other) {
+    void swap(weak_ptr<T>& other) noexcept {
         using std::swap;
         swap(cblock, other.cblock);
         swap(ptr, other.ptr);
     }
 
-    weak_ptr(control_block* _cblock, T* _ptr) : cblock(_cblock), ptr(_ptr) {
+private:
+    control_block* cblock;
+    T* ptr;
+
+    weak_ptr(control_block* cblock, T* ptr) : cblock(cblock), ptr(ptr) {
         if (cblock != nullptr) {
             cblock->add_weak();
         }
