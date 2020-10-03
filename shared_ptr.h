@@ -11,8 +11,6 @@ struct shared_ptr {
 
     shared_ptr() : cblock(nullptr), ptr(nullptr) {}
 
-    explicit shared_ptr(T* ptr) : shared_ptr(ptr, std::default_delete<T>()) {}
-
     shared_ptr(std::nullptr_t) : shared_ptr() {}
 
     template<typename Y, typename D,
@@ -20,7 +18,7 @@ struct shared_ptr {
                     std::is_convertible<Y*, T*>::value> >
     shared_ptr(Y* ptr, D deleter) : ptr(ptr) {
         try {
-            cblock = new regular_control_block<Y, D>(ptr, deleter);
+            cblock = new regular_control_block<Y, D>(ptr, std::move(deleter));
         } catch(...) {
             deleter(ptr);
             throw;
@@ -78,7 +76,7 @@ struct shared_ptr {
             typename = std::enable_if_t<
                     std::is_convertible<Y*, T*>::value> >
     void reset(Y* new_ptr, D deleter) {
-        shared_ptr<T> new_shared(new_ptr, deleter);
+        shared_ptr<T> new_shared(new_ptr, std::move(deleter));
         swap(new_shared);
     }
 
@@ -208,7 +206,6 @@ struct weak_ptr {
 
     weak_ptr& operator =(weak_ptr&& other) {
         if (this != &other) {
-            weak_ptr<T> empty;
             weak_ptr(std::move(other)).swap(*this);
         }
         return *this;
